@@ -1,0 +1,66 @@
+body {
+background-color: #ffffff;
+justify-content: center;
+font-family: Daimler CA;
+padding: 10px;
+overflow-x: hidden;
+}
+.tableFixHead {
+width: 100%;
+table-layout: fixed;
+border-collapse: collapse;
+}
+.tablesize .tableFixHead tbody {
+height: 100px;
+}
+.tableFixHead tbody {
+display: inline-block;
+width: 100%;
+overflow: auto;
+height: 300px;
+}
+.tableFixHead thead tr {
+display: inline-block;
+}
+.tableFixHead th,
+.tableFixHead td {
+word-break: break-all;
+width: 400px;
+text-align: left;
+}
+.tableFixHead tbody td {
+text-align: justify;
+}
+.dataframe th {
+background: #2E358E;
+color: white;
+}
+* {
+box-sizing: border-box;
+}
+h2{
+color:#2E358E;
+}
+ul.breadcrumb {
+  padding: 10px 16px;
+  list-style: none;
+  background-color: #eee;
+}
+ul.breadcrumb li {
+  display: inline;
+  font-size: 18px;
+}
+ul.breadcrumb li+li:before {
+  padding: 8px;
+  color: black;
+  content: "/\00a0";
+}
+ul.breadcrumb li a {
+  color: #0275d8;
+  text-decoration: none;
+}
+ul.breadcrumb li a:hover {
+  color: #01447e;
+  text-decoration: underline;
+}
+
