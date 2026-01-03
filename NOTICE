@@ -1,0 +1,15 @@
+DataQualityFramework-python
+Copyright 2021 Daimler AG. All Rights Reserved.
+
+The DataQualityFramework is available under the Daimler Inner Source License ("ISL):
+https://git.daimler.com/daimler-foss/daimler-inner-source-license/blob/master/LICENSE.md
+
+The images and software provided by this component and it's subcomponents are 
+built by using the following software or parts of it:
+
+- https://github.com/apache/spark
+- https://github.com/WebwareForPython/DBUtils
+- https://github.com/minrk/findspark
+- https://github.com/python/importlib_metadata
+- https://github.com/plotly/plotly.py
+- https://github.com/astanin/python-tabulate

@@ -1,0 +1,20 @@
+{
+    "datasource_path": "/dbfs/mnt/cocbigdatard-prod/projects/DataQualityFramework/Testing/data/input/multi_data_automation/",
+    "profile_name": "multi_customers_load_incremental",
+    "data_format": "delta",
+    "incremental_column": "load_ts",
+    "incremental_filter": "previous_month",
+    "checks": [
+        {
+            "type": "check_datatype",
+            "kwargs": {
+                "table": "customers",
+                "columns": [
+                    "customer_id",
+                    "car_id"
+                ],
+                "d_type": "int",
+            }
+        }
+    ]
+}

@@ -1,0 +1,230 @@
+# Starter pipeline
+
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- development
+- master
+
+variables:
+- group: DataQualityFrameworkVariableGroup
+- group: CoCBigDataAI-KV_Secrets
+- name: Patch
+  value: $[counter(format('{0}.{1}',variables['DQF-VERSION-MAJOR'],variables['DQF-VERSION-MINOR']), 1)]
+- name: ReleaseTag
+  value: $(DQF-VERSION-MAJOR).$(DQF-VERSION-MINOR).$(Patch)
+
+pool: 'DOTAzure-Ubuntu-18.04'
+#pool:
+#  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Testing
+  jobs:
+    - job: Tests
+      continueOnError: false
+      steps:
+        - script: |
+            rm -r $(Build.SourcesDirectory)/.git
+            rm -r $(Build.SourcesDirectory)/.gitignore
+            rm -r $(Build.SourcesDirectory)/azure-pipelines.yml
+            rm -r $(Build.SourcesDirectory)/docs
+          failOnStderr: true
+          displayName: "Remove git files before creating archive"
+
+        - script: |
+            mkdir '$(System.DefaultWorkingDirectory)/env'
+            mkdir '$(System.DefaultWorkingDirectory)/env/check_profiles'
+            mkdir '$(System.DefaultWorkingDirectory)/env/check_results'
+            mkdir '$(System.DefaultWorkingDirectory)/env/config'
+            #Create config-json for Unit Testing
+            echo "{
+            \"check_profile_path\": \"$(System.DefaultWorkingDirectory)/env/check_profiles\",
+            \"result_output_path\": \"$(System.DefaultWorkingDirectory)/env/check_results\",
+            \"result_format\": \"Delta\"
+            }" > $(System.DefaultWorkingDirectory)/env/config/dqf_config.json
+            cat $(System.DefaultWorkingDirectory)/env/config/dqf_config.json
+
+          failOnStderr: true
+          displayName: "Prepare Environment for Testing"
+          
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '3.6'
+            architecture: 'x64'
+
+        - script: |
+            python -m pip install --upgrade pip
+            python -m pip install --upgrade setuptools wheel
+            python -m pip install -r requirements.txt
+          displayName: 'Install dependencies'
+
+        - script:
+            python -m tests.data.data_generation
+          displayName: Create UnitTest Data
+
+        - script: |
+            #Create local Environment Variable just for UnitTesting Access
+            export DQF_INSTALL_PATH=$(System.DefaultWorkingDirectory)/env
+            pip install pytest pytest-azurepipelines pytest-cov
+            pytest tests/ --cov=dqf --cov-report xml
+          displayName: 'Perform Unit Tests'
+
+        - task: PublishTestResults@2
+          condition: succeededOrFailed()
+          inputs:
+            testResultsFormat: 'XUnit'
+            testResultsFiles: '**/test-*.xml'
+            testRunTitle: 'Publish test results for Python $(python.version)'
+          enabled: false
+
+        - task: PublishCodeCoverageResults@1
+          inputs:
+            codeCoverageTool: Cobertura
+            summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+          enabled: true
+
+- stage: 'CodeAnalysis'
+  dependsOn: Testing
+  condition: succeeded('Testing')
+
+  jobs:
+    - job: SonarQube
+      steps:
+        - checkout: none
+        - task: SonarQubePrepare@4
+          inputs:
+            SonarQube: 'DaimlerInternalSonarQube'
+            scannerMode: 'CLI'
+            configMode: 'manual'
+            cliProjectKey: '$(System.TeamProjectId)_$(DQF-Dev-Name)'
+            cliProjectName: '$(System.TeamProject)-$(Build.DefinitionName)'
+            cliProjectVersion: '$(Build.BuildNumber)'
+            cliSources: '.'
+            extraProperties: |
+              # Additional properties that will be passed to the scanner,
+              # Put one key=value per line, example:
+              sonar.exclusions=htmlcov/**
+              sonar.sources=dqf
+              sonar.tests=tests
+              sonar.python.coverage.reportPaths=$(System.DefaultWorkingDirectory)/coverage.xml
+              sonar.python.xunit.reportPath=$(System.DefaultWorkingDirectory)/test-output.xml
+        - task: SonarQubeAnalyze@4
+        - task: SonarQubePublish@4
+          inputs:
+            pollingTimeoutSec: '300'
+
+- stage: Build
+  dependsOn: CodeAnalysis
+  condition: succeeded('CodeAnalysis')
+  jobs:
+  - job: Build
+    continueOnError: false
+    steps:
+    - script: |
+        echo "" > $(Build.SourcesDirectory)/deployment_version
+        echo $(ReleaseTag) > $(Build.SourcesDirectory)/deployment_version
+      failOnStderr: true
+      displayName: "Set ReleaseTag of Build"
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.6'
+        architecture: 'x64'
+
+    - script: |
+        python setup.py bdist_wheel --name $(DQF-DEV-NAME)
+      displayName: 'Artifact creation for Development'
+      condition: ne(variables['Build.SourceBranchName'], 'master')
+
+    - script: |
+        python setup.py bdist_wheel --name $(DQF-RELEASE-NAME)
+      displayName: 'Artifact creation for Release'
+      condition: eq(variables['Build.SourceBranchName'], 'master')
+
+    - task: CopyFiles@2
+      inputs:
+        CleanTargetFolder: True
+        sourceFolder: ./dist
+        targetFolder: $(Build.ArtifactStagingDirectory)
+
+    - publish: '$(Build.ArtifactStagingDirectory)'
+      artifact: dist
+
+- stage: 'DEV'
+  dependsOn:
+  - Build
+  condition: and(succeeded('Build'), eq(variables['Build.SourceBranchName'], 'development'), ne(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+    - deployment: Deployment
+      environment: DQF_Development
+      workspace:
+        clean: outputs
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - download: 'current'
+              artifact: dist
+            - task: CmdLine@2
+              inputs:
+                script: |
+                  echo "Structure of work folder of this pipeline:"
+                  tree $(Build.SourcesDirectory) /f
+                  echo "Structure of work folder of this pipeline:"
+                  tree $(Build.ArtifactStagingDirectory) /f
+                  echo "Structure of work folder of this pipeline:"
+                  tree $(System.DefaultWorkingDirectory) /f
+              displayName: Show existing Files
+            - task: TwineAuthenticate@1
+              displayName: 'Twine Authenticate '
+              inputs:
+                artifactFeed: DataQualityFramework
+            - script: |
+                pip install twine
+              displayName: 'Install twine'
+            - script: |
+                python -m twine upload -r DataQualityFramework --skip-existing --config-file $(PYPIRC_PATH) $(pipeline.workspace)/dist/*
+              displayName: 'Publish Artifact'
+            - script: |
+                curl -s -L https://detect.synopsys.com/detect.sh | bash -s - --blackduck.url="https://bdscan.daimler.com" --blackduck.api.token="$(CoCBDAIPID-BlackDuck-Token)" --detect.project.name="DataQualityFramework" --detect.project.version.name="development" --detect.project.codelocation.unmap=true --blackduck.timeout=36000 --detect.yarn.prod.only=true --detect.pip.requirements.path=requirements.txt --logging.level.com.synopsys.integration="DEBUG"
+              displayName: 'FOSS License Scan'
+- stage: 'PROD'
+  dependsOn:
+  - Build
+  condition: and(succeeded('Build'), eq(variables['Build.SourceBranchName'], 'master'), ne(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+    - deployment: Release
+      environment: DQF_Release
+      workspace:
+        clean: all
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - download: 'current'
+              artifact: dist
+            - task: TwineAuthenticate@1
+              displayName: 'Twine Authenticate '
+              inputs:
+                artifactFeed: DataQualityFramework
+            - script: |
+                pip install twine
+              displayName: 'Install twine'
+            - script: |
+                python -m twine upload -r DataQualityFramework --skip-existing --config-file $(PYPIRC_PATH) $(pipeline.workspace)/dist/*
+              displayName: 'Publish Artifact'
+            - script: |
+                curl -s -L https://detect.synopsys.com/detect.sh | bash -s - --blackduck.url="https://bdscan.daimler.com" --blackduck.api.token="$(CoCBDAIPID-BlackDuck-Token)" --detect.project.name="DataQualityFramework" --detect.project.version.name="master" --detect.project.codelocation.unmap=true --blackduck.timeout=36000 --detect.yarn.prod.only=true --detect.pip.requirements.path=requirements.txt --logging.level.com.synopsys.integration="DEBUG"
+              displayName: 'FOSS License Scan'
+
+            - task: PublishTAFKPI@1
+              inputs:
+                projectName: 'DataQualityFramework $(ReleaseTag)'
+                projectOwner: 'stepath'
+                departmentId: 'H00807030700000'
+                departmentName: 'ITD/C'
+                ownerCostCenter: '059-6829'
+              enabled: true
